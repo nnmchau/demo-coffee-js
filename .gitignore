@@ -1,0 +1,24 @@
+# Node & frontend
+node_modules/
+dist/
+build/
+coverage/
+.tmp/
+.npm/
+.yarn/*
+!.yarn/releases
+!.yarn/plugins
+!.yarn/sdks
+!.yarn/versions
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
