@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Coffee Finder (JS + OSM + SerpAPI)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""
+  ></script>
+  <style>
+    :root { --h: 60px; --sidebar: 320px; }
+    body { margin: 0; font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    header { height: var(--h); display:flex; gap:.5rem; align-items:center; padding:.5rem .75rem; border-bottom:1px solid #eee; flex-wrap: wrap; }
+    header h1 { font-size: 16px; margin: 0 .5rem 0 0; }
+    label { font-size: 12px; color: #555; }
+    input, select, button { height: 34px; padding: 0 .5rem; border: 1px solid #ccc; border-radius: 8px; }
+    #app { display: grid; grid-template-columns: var(--sidebar) 1fr; height: calc(100vh - var(--h)); }
+    #list { overflow: auto; border-right: 1px solid #eee; }
+    #map { width: 100%; height: 100%; }
+    .card { border-bottom: 1px solid #eee; padding: .75rem; }
+    .title { font-weight: 600; }
+    .pill { display: inline-block; padding: 2px 6px; border-radius: 999px; border: 1px solid #ddd; font-size: 12px; margin-right: 6px; }
+    .muted { color: #666; font-size: 12px; }
+    .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+    .flex1 { flex: 1; min-width: 180px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>☕ Coffee Finder</h1>
+    <div class="row" style="flex:1">
+      <div class="flex1">
+        <label>Keyword<br/>
+          <input id="q" type="text" value="coffee shop" />
+        </label>
+      </div>
+      <div>
+        <label>Min rating<br/>
+          <select id="minRating">
+            <option value="0">Any</option>
+            <option value="3.5">3.5+</option>
+            <option value="4.0" selected>4.0+</option>
+            <option value="4.5">4.5+</option>
+          </select>
+        </label>
+      </div>
+      <div>
+        <label>Max distance (km)<br/>
+          <select id="maxKm">
+            <option>0.5</option>
+            <option selected>1</option>
+            <option>2</option>
+            <option>5</option>
+          </select>
+        </label>
+      </div>
+      <label style="display:flex;align-items:center;gap:.4rem;margin-top:.9rem;">
+        <input id="openNow" type="checkbox" /> Open now
+      </label>
+      <button id="locate" style="margin-top:.9rem;">📍 Locate</button>
+      <button id="search" style="margin-top:.9rem;">Search</button>
+    </div>
+  </header>
+
+  <div id="app">
+    <div id="list"></div>
+    <div id="map"></div>
+  </div>
+
+  <script>
+    const DEFAULT = { lat: 10.776, lng: 106.700, zoom: 14 };
+    const $ = id => document.getElementById(id);
+
+    // Map
+    const map = L.map("map").setView([DEFAULT.lat, DEFAULT.lng], DEFAULT.zoom);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19, attribution: "&copy; OpenStreetMap"
+    }).addTo(map);
+
+    const centerMarker = L.marker([DEFAULT.lat, DEFAULT.lng], { draggable: true })
+      .addTo(map)
+      .bindTooltip("Drag to set search center")
+      .openTooltip();
+
+    const q = $("q"), minRating = $("minRating"), maxKm = $("maxKm"),
+          openNow = $("openNow"), locateBtn = $("locate"), searchBtn = $("search"),
+          list = $("list");
+
+    let placeMarkers = [];
+    function clearMarkers() { placeMarkers.forEach(m => map.removeLayer(m)); placeMarkers = []; }
+
+    function renderPlaces(places) {
+      clearMarkers();
+      list.innerHTML = places.length ? "" : `<div class="card">No results.</div>`;
+      places.forEach((x, i) => {
+        const m = L.marker([x.location.lat, x.location.lng]).addTo(map);
+        placeMarkers.push(m);
+        const popup = `
+          <div style="font-weight:600">${x.title}</div>
+          <div class="muted">${x.address || ""}</div>
+          <div style="margin:.25rem 0">
+            <span class="pill">⭐ ${x.rating || "—"}</span>
+            <span class="pill">📏 ${x.distance_km.toFixed(2)} km</span>
+            ${x.open_state ? `<span class="pill">${x.open_state}</span>` : ""}
+          </div>
+          ${x.phone ? `<div class="muted">📞 ${x.phone}</div>` : ""}
+          ${x.website ? `<div><a class="muted" href="${x.website}" target="_blank" rel="noopener">Website / Map</a></div>` : ""}
+        `;
+        m.bindPopup(popup);
+
+        const item = document.createElement("div");
+        item.className = "card";
+        item.innerHTML = `
+          <div class="title">${i + 1}. ${x.title}</div>
+          <div class="muted">${x.address || ""}</div>
+          <div style="margin:.25rem 0">
+            <span class="pill">⭐ ${x.rating || "—"}</span>
+            <span class="pill">📏 ${x.distance_km.toFixed(2)} km</span>
+            ${x.open_state ? `<span class="pill">${x.open_state}</span>` : ""}
+          </div>
+          <div class="muted">${x.phone ? "📞 " + x.phone : ""}</div>
+        `;
+        item.addEventListener("mouseenter", () => m.openPopup());
+        item.addEventListener("click", () => {
+          map.setView([x.location.lat, x.location.lng], Math.max(map.getZoom(), 16), { animate: true });
+          m.openPopup();
+        });
+        list.appendChild(item);
+      });
+    }
+
+    async function doSearch() {
+      list.innerHTML = `<div class="card">Searching…</div>`;
+      const { lat, lng } = centerMarker.getLatLng();
+      const params = new URLSearchParams({
+        q: q.value.trim() || "coffee shop",
+        lat: String(lat),
+        lng: String(lng),
+        zoom: String(map.getZoom() || 14),
+        min_rating: minRating.value,
+        max_km: maxKm.value,
+        open_now: String(openNow.checked)
+      });
+      try {
+        const r = await fetch(`/api/coffee?${params}`);
+        if (!r.ok) throw new Error(await r.text());
+        const data = await r.json();
+        renderPlaces(data.results || []);
+      } catch (e) {
+        list.innerHTML = `<div class="card">Error: ${e.message || e}</div>`;
+      }
+    }
+
+    centerMarker.on("moveend", doSearch);
+    searchBtn.onclick = doSearch;
+    locateBtn.onclick = () => {
+      if (!navigator.geolocation) return alert("Geolocation not supported.");
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          const { latitude, longitude } = pos.coords;
+          centerMarker.setLatLng([latitude, longitude]);
+          map.setView([latitude, longitude], 15);
+          doSearch();
+        },
+        err => alert("Geolocation failed: " + err.message),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+      );
+    };
+
+    // first load
+    doSearch();
+  </script>
+</body>
+</html>
